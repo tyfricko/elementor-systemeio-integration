@@ -1,10 +1,16 @@
 <?php
 /**
  * Plugin Name: Elementor Systeme.io Integration
- * Description: Integrates Elementor Forms with Systeme.io API
- * Version: 1.0.0
- * Author: Your Name
- * Text Domain: elementor-systemeio-integration
+ * Plugin URI: https://github.com/tyfricko/elementor-systemeio-integration.git
+ * Description: Adds Systeme.io integration to Elementor forms
+ * Version: 1.0.2
+ * Author: Matej Zlatich
+ * Author URI: https://matejzlatic.com
+ * License: GPL v2 or later
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.html
+ * Text Domain: elementor-systemeio
+ * Requires at least: 5.6
+ * Requires PHP: 7.0
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
