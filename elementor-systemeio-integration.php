@@ -3,7 +3,7 @@
  * Plugin Name: Elementor Systeme.io Integration
  * Plugin URI: https://github.com/tyfricko/elementor-systemeio-integration.git
  * Description: Adds Systeme.io integration to Elementor forms
- * Version: 1.0.2
+ * Version: 1.1.0
  * Author: Matej Zlatich
  * Author URI: https://matejzlatic.com
  * License: GPL v2 or later

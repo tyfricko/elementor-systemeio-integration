@@ -114,6 +114,64 @@ class SystemeIO_Action_After_Submit extends \ElementorPro\Modules\Forms\Classes\
             ];
         }
 
+        // First, get or create tag
+        $tags_response = wp_remote_get('https://api.systeme.io/api/tags', [
+            'headers' => [
+                'X-API-Key' => $settings['systemeio_api_key'],
+                'accept' => 'application/json'
+            ]
+        ]);
+
+        if (is_wp_error($tags_response)) {
+            $ajax_handler->add_error_message('Error connecting to Systeme.io: ' . $tags_response->get_error_message());
+            return;
+        }
+
+        $tags_data = json_decode(wp_remote_retrieve_body($tags_response), true);
+        $tag_id = null;
+
+        // Look for existing tag
+        if (isset($tags_data['items']) && is_array($tags_data['items'])) {
+            foreach ($tags_data['items'] as $tag) {
+                if (strtolower($tag['name']) === strtolower($settings['systemeio_tag_name'])) {
+                    $tag_id = $tag['id'];
+                    break;
+                }
+            }
+        }
+
+        // If tag doesn't exist, create it
+        if (!$tag_id) {
+            $create_tag_response = wp_remote_post('https://api.systeme.io/api/tags', [
+                'headers' => [
+                    'X-API-Key' => $settings['systemeio_api_key'],
+                    'Content-Type' => 'application/json'
+                ],
+                'body' => json_encode([
+                    'name' => $settings['systemeio_tag_name']
+                ])
+            ]);
+
+            if (!is_wp_error($create_tag_response)) {
+                $response_code = wp_remote_retrieve_response_code($create_tag_response);
+                $response_body = json_decode(wp_remote_retrieve_body($create_tag_response), true);
+
+                if ($response_code === 200 || $response_code === 201) {
+                    if (isset($response_body['id'])) {
+                        $tag_id = $response_body['id'];
+                    }
+                } else {
+                    if (isset($response_body['detail']) && strpos($response_body['detail'], 'upgrade your plan') !== false) {
+                        $ajax_handler->add_error_message('Unable to create new tag: Maximum number of tags reached in your Systeme.io plan.');
+                        return;
+                    } else {
+                        $ajax_handler->add_error_message('Failed to create tag in Systeme.io');
+                        return;
+                    }
+                }
+            }
+        }
+
         // Create contact
         $response = wp_remote_post('https://api.systeme.io/api/contacts', [
             'headers' => [
@@ -129,109 +187,93 @@ class SystemeIO_Action_After_Submit extends \ElementorPro\Modules\Forms\Classes\
         }
 
         $response_code = wp_remote_retrieve_response_code($response);
-        $response_body = wp_remote_retrieve_body($response);
-        
-        if ($response_code !== 200 && $response_code !== 201) {
-            $error_data = json_decode($response_body, true);
-            
-            // Check if the error is because the email is already used
-            if ($response_code === 422 && isset($error_data['detail']) && strpos($error_data['detail'], 'email: This value is already used') !== false) {
-                $ajax_handler->add_error_message('This email is already subscribed.');
-            } else {
-                // For admins, show detailed error
-                if (current_user_can('manage_options')) {
-                    $error_message = 'Error creating contact: ' . (isset($error_data['detail']) ? $error_data['detail'] : 'Unknown error');
-                    $ajax_handler->add_error_message($error_message . ' This message is not visible to site visitors.');
-                } else {
-                    // For regular users, show simple error
-                    $ajax_handler->add_error_message('Error creating contact. Please try again or contact support.');
-                }
-            }
-            return;
-        }
-        
-        $contact_data = json_decode($response_body, true);
+        $error_data = json_decode(wp_remote_retrieve_body($response), true);
 
-        // Handle tag
-        if (!empty($settings['systemeio_tag_name']) && !empty($contact_data['id'])) {
-            // First try to find if tag exists
-            $tags_response = wp_remote_get('https://api.systeme.io/api/tags', [
+        if ($response_code === 422 && isset($error_data['detail']) && strpos($error_data['detail'], 'email: This value is already used') !== false) {
+            // Get existing contact by email
+            $get_contact_response = wp_remote_get('https://api.systeme.io/api/contacts?email=' . urlencode($contact_data['email']), [
                 'headers' => [
                     'X-API-Key' => $settings['systemeio_api_key'],
                     'accept' => 'application/json'
                 ]
             ]);
 
-            if (!is_wp_error($tags_response)) {
-                $tags_data = json_decode(wp_remote_retrieve_body($tags_response), true);
-                $tag_id = null;
+            if (!is_wp_error($get_contact_response)) {
+                $existing_contacts = json_decode(wp_remote_retrieve_body($get_contact_response), true);
+                
+                if (!empty($existing_contacts['items'])) {
+                    $existing_contact = $existing_contacts['items'][0]; // Get first match
+                    $contact_data['id'] = $existing_contact['id'];
 
-                // Look for existing tag
-                if (isset($tags_data['items']) && is_array($tags_data['items'])) {
-                    foreach ($tags_data['items'] as $tag) {
-                        if (strtolower($tag['name']) === strtolower($settings['systemeio_tag_name'])) {
-                            $tag_id = $tag['id'];
-                            break;
+                    // Check if contact already has the tag
+                    $has_tag = false;
+                    if (!empty($existing_contact['tags'])) {
+                        foreach ($existing_contact['tags'] as $contact_tag) {
+                            if ($contact_tag['id'] === $tag_id) {
+                                $has_tag = true;
+                                break;
+                            }
                         }
                     }
-                }
 
-                // If tag doesn't exist, create it
-                if (!$tag_id) {
-                    $create_tag_response = wp_remote_post('https://api.systeme.io/api/tags', [
-                        'headers' => [
-                            'X-API-Key' => $settings['systemeio_api_key'],
-                            'Content-Type' => 'application/json'
-                        ],
-                        'body' => json_encode([
-                            'name' => $settings['systemeio_tag_name']
-                        ])
-                    ]);
+                    if (!$has_tag) {
+                        // Add the tag to the existing contact
+                        $add_tag_response = wp_remote_post("https://api.systeme.io/api/contacts/{$contact_data['id']}/tags", [
+                            'headers' => [
+                                'X-API-Key' => $settings['systemeio_api_key'],
+                                'Content-Type' => 'application/json'
+                            ],
+                            'body' => json_encode([
+                                'tagId' => $tag_id
+                            ])
+                        ]);
 
-                    if (!is_wp_error($create_tag_response)) {
-                        $response_code = wp_remote_retrieve_response_code($create_tag_response);
-                        $response_body = json_decode(wp_remote_retrieve_body($create_tag_response), true);
-
-                        if ($response_code === 200 || $response_code === 201) {
-                            if (isset($response_body['id'])) {
-                                $tag_id = $response_body['id'];
-                            }
+                        if (wp_remote_retrieve_response_code($add_tag_response) === 204) {
+                            $ajax_handler->add_success_message('Tag added to existing contact successfully.');
                         } else {
-                            // Handle plan limitation error
-                            if (isset($response_body['detail']) && strpos($response_body['detail'], 'upgrade your plan') !== false) {
-                                $ajax_handler->add_error_message('Unable to create new tag: Maximum number of tags reached in your Systeme.io plan.');
-                                return;
-                            } else {
-                                $ajax_handler->add_error_message('Failed to create tag in Systeme.io');
-                                return;
-                            }
+                            $ajax_handler->add_error_message('Failed to add tag to existing contact.');
                         }
+                    } else {
+                        $ajax_handler->add_success_message('Contact already has the specified tag.');
                     }
+                    return;
                 }
+            }
+            $ajax_handler->add_error_message('Error processing existing contact.');
+        } elseif ($response_code !== 201) {
+            // For admins, show detailed error
+            if (current_user_can('manage_options')) {
+                $error_message = 'Error creating contact: ' . (isset($error_data['detail']) ? $error_data['detail'] : 'Unknown error');
+                $ajax_handler->add_error_message($error_message . ' This message is not visible to site visitors.');
+            } else {
+                // For regular users, show simple error
+                $ajax_handler->add_error_message('Error creating contact. Please try again or contact support.');
+            }
+            return;
+        }
 
-                // Add tag to contact if we have a tag ID
-                if ($tag_id) {
-                    $add_tag_response = wp_remote_post("https://api.systeme.io/api/contacts/{$contact_data['id']}/tags", [
-                        'headers' => [
-                            'X-API-Key' => $settings['systemeio_api_key'],
-                            'Content-Type' => 'application/json'
-                        ],
-                        'body' => json_encode([
-                            'tagId' => $tag_id
-                        ])
-                    ]);
+        // Handle tag for new contact
+        if ($response_code === 201) {
+            $contact_data = json_decode(wp_remote_retrieve_body($response), true);
+            
+            if (!empty($contact_data['id'])) {
+                $add_tag_response = wp_remote_post("https://api.systeme.io/api/contacts/{$contact_data['id']}/tags", [
+                    'headers' => [
+                        'X-API-Key' => $settings['systemeio_api_key'],
+                        'Content-Type' => 'application/json'
+                    ],
+                    'body' => json_encode([
+                        'tagId' => $tag_id
+                    ])
+                ]);
 
-                    $response_code = wp_remote_retrieve_response_code($add_tag_response);
-                    
-                    if ($response_code !== 204) {
-                        $ajax_handler->add_error_message('Failed to add tag to contact');
-                        return;
-                    }
+                if (wp_remote_retrieve_response_code($add_tag_response) === 204) {
+                    $ajax_handler->add_success_message('Contact successfully created and tagged in Systeme.io.');
+                } else {
+                    $ajax_handler->add_error_message('Contact created but failed to add tag.');
                 }
             }
         }
-
-        $ajax_handler->add_success_message('Contact successfully added to Systeme.io with tag.');
     }
 
     public function on_export($element) {

@@ -4,11 +4,13 @@ A WordPress plugin that adds Systeme.io integration to Elementor forms.
 
 ## Description
 
-This plugin adds a new action to Elementor Pro forms that allows you to integrate form submissions with Systeme.io. It supports
+This plugin adds a new action to Elementor Pro forms that allows you to integrate form submissions with Systeme.io. It supports:
 - Adding contacts to Systeme.io
 - Setting first name and last name
 - Adding tags to contacts
 - Automatic tag creation if it doesn't exist (beware of your systeme.io plan limit)
+- Handling existing contacts gracefully
+- Adding tags to existing contacts without duplications
 
 ## Installation
 
@@ -28,7 +30,22 @@ This plugin adds a new action to Elementor Pro forms that allows you to integrat
 
 1. Get your Systeme.io API key from your Systeme.io account
 2. In your Elementor form settings, add the Systeme.io action
-3. Configure the field mappings and tag settings
+3. Configure the field mappings:
+   - Email Field ID (required)
+   - First Name Field ID (optional)
+   - Last Name Field ID (optional)
+   - Tag Name (required)
+
+## Changelog
+
+### 1.1.0
+- Added support for handling existing contacts
+- Added automatic tag checking to prevent duplicates
+- Improved error handling and messages
+- Added different error messages for admins and regular users
+
+### 1.0.0
+- Initial release
 
 ## Support
 
